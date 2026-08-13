@@ -1,0 +1,17 @@
+# Python dependencies for reproducing the paper's federated CGM trial.
+#
+# torch: install the build matching your CUDA (or CPU). See
+# https://pytorch.org/get-started/locally/ for the right wheel index.
+torch>=2.0
+numpy>=1.24          # 1.x and 2.x both validated (1.26 server-side, 2.4 client-side)
+omegaconf>=2.3
+loguru>=0.7
+higher>=0.2.1        # required by MLDG (proposer.method=mldg, the paper's main result)
+
+# Data pipeline only (data_pipeline/build_*.py). Skip if you already have the
+# packed .npy splits.
+pandas>=2.0
+pyarrow>=12.0        # parquet reader used by pandas
+
+# Optional:
+#   matplotlib>=3.7   # per-round debug plots; the trainer skips them if absent

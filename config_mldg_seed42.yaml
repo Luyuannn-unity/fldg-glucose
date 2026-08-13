@@ -1,0 +1,82 @@
+server:
+  host: 0.0.0.0
+  port: 8088
+  num_clients: 4
+  num_rounds: 25
+  early_stop_patience: 5
+  out_dir: output_mldg_s42
+common_args:
+  template_name: time_series_prediction_transformer
+  project_name: CGMTransformer_RealFL
+  run_mode: production
+  random_seed: 42
+data_args:
+  normalization_mode: global
+  global_cgm_mean: 154.04
+  global_cgm_std: 61.0
+  source_dirs:
+  - ./data_output/metabonet_splits/HUPA-UCM
+  - ./data_output/metabonet_splits/ABC4D
+  - ./data_output/metabonet_splits/ARISES
+  - ./data_output/metabonet_splits/T1D-UOM
+  sampling_minutes: 5
+  seq_len: 72
+  label_len: 6
+  pred_len: 12
+  stride: 1
+  max_gap_steps: 6
+  use_bolus: false
+model_args:
+  model_name: transformer
+  enc_in: 1
+  dec_in: 1
+  c_out: 1
+  d_model: 128
+  n_heads: 8
+  e_layers: 6
+  d_layers: 2
+  d_ff: 2048
+  dropout: 0.05
+  embed: cycF
+  freq: cyc
+  activation: relu
+  factor: 5
+  full_attention: true
+  output_attention: false
+train_args:
+  proposer_num_epochs: 1
+  proposer_max_steps_per_epoch: 500
+  proposer_train_batch_size: 256
+  proposer_val_batch_size: 256
+  proposer_test_batch_size: 256
+  proposer_learning_rate: 0.0001
+  proposer_train_optimizer_name: adam
+  proposer_train_lr_scheduler_type: constant
+  proposer_train_weight_decay: 0.001
+  proposer_loss_type: mse
+  proposer_save_steps: 10
+  early_stopping: false
+  num_communication_rounds: 25
+  federated_optimizer_name: fedavg
+  fedprox_mu: 0.05
+  mldg: true
+  mldg_first_order: false
+  mldg_inner_reuse_outer_opt: true
+  mldg_domain_split: patient
+  mldg_n_support: 1
+  mldg_n_query: 1
+  mldg_inner_iters: 1
+  mldg_trade_off: 1.0
+  pfl_method: null
+  apfl_alpha_init: 0.25
+  apfl_alpha_lr: 0.1
+  ditto_prox_mu: 0.1
+evaluation_args:
+  voter_val_set_size: 5
+  horizon_30min_idx: 5
+tracking_args:
+  out_put_root: output/clients
+  checkpoint_save_dir: checkpoints
+  proposer_train_gradient_checkpointing: false
+  proposer_train_logging_steps: 5
+  proposer_model_save_steps: 10
