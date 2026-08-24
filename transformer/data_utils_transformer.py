@@ -100,6 +100,8 @@ class LazyCGMTransformerDataset(Dataset):
     MINUTES_PER_DAY = 24 * 60
     CGM_IDX         = 0     # CGM is channel 0 of segments_packed.npy
     BOLUS_IDX       = 3     # bolus IU at channel 3 (units, not normalised)
+    CGM_REAL_IDX    = 6     # 1.0 = original sensor reading, 0.0 = interpolated
+    TOD_SIN_IDX, TOD_COS_IDX = 1, 2   # precomputed time-of-day marks
 
     def __init__(
         self,
@@ -192,23 +194,49 @@ class LazyCGMTransformerDataset(Dataset):
             marks[cfg.seq_len:],
         ], axis=0)
 
+        # y carries the cgm_real mask as channel 1 (1 = real sensor sample,
+        # 0 = interpolated). The loss adapters use it for a masked mean so
+        # interpolated targets never contribute gradient; every other consumer
+        # indexes y[..., 0] explicitly.
+        if self._packed.shape[1] > self.CGM_REAL_IDX:
+            y_msk = np.asarray(
+                self._packed[abs_start + cfg.seq_len:end, self.CGM_REAL_IDX],
+                dtype=np.float32,
+            )
+        else:
+            y_msk = np.ones(cfg.pred_len, dtype=np.float32)
+        y_out = np.stack([fut_norm, y_msk], axis=-1)   # [pred_len, 2]
+
         return (
             torch.from_numpy(enc_input.astype(np.float32, copy=False)),
             torch.from_numpy(enc_marks.astype(np.float32, copy=False)),
             torch.from_numpy(dec_input[:, None].astype(np.float32, copy=False)),
             torch.from_numpy(dec_marks.astype(np.float32, copy=False)),
-            torch.from_numpy(fut_norm[:, None].astype(np.float32, copy=False)),
+            torch.from_numpy(y_out.astype(np.float32, copy=False)),
             torch.tensor(self._mean, dtype=torch.float32),
             torch.tensor(self._std,  dtype=torch.float32),
             torch.tensor(pat_idx,    dtype=torch.int64),
         )
 
     def _marks(self, abs_start: int, end: int) -> np.ndarray:
+        # Preferred: real unix timestamps. Fallback: the precomputed tod_sin/
+        # tod_cos channels (always correct, unit-independent). Last resort:
+        # a synthetic phase — which is WRONG (every window looks like it starts
+        # at midnight), so it is logged loudly.
         if self._ts is not None:
             secs = np.asarray(self._ts[abs_start:end], dtype=np.int64) % self.SECONDS_PER_DAY
             mins = secs // 60
             frac = mins.astype(np.float32) / float(self.MINUTES_PER_DAY)
+        elif self._packed.shape[1] > self.TOD_COS_IDX:
+            return np.array(   # copy out of the read-only mmap
+                self._packed[abs_start:end, self.TOD_SIN_IDX:self.TOD_COS_IDX + 1],
+                dtype=np.float32,
+            )
         else:
+            if not getattr(self, "_warned_marks", False):
+                logger.warning(f"{self._source_dir}: no timestamps and no tod channels — "
+                               "using synthetic time-of-day marks (degenerate)")
+                self._warned_marks = True
             n             = end - abs_start
             steps_per_day = self.MINUTES_PER_DAY / self._cfg.sampling_minutes
             frac          = (np.arange(n, dtype=np.float32) % steps_per_day) / steps_per_day

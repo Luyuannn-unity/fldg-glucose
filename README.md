@@ -10,6 +10,31 @@ weights and a handful of scalar metrics cross the wire per round.
 
 ---
 
+## Data-quality corrections (2026-08) — please read before reproducing
+
+Three defects were found and fixed after the original release; the corrected
+results (all 5 seeds, every table) are in [`CHANGES.md`](CHANGES.md) and the
+technical details in [`data_pipeline/DATASET.md`](data_pipeline/DATASET.md) §11.
+
+1. **Pre-imputed upstream data (HUPA-UCM, T1D-UOM).** MetaboNet's HUPA-UCM has
+   0% missing CGM because it was linearly resampled and gap-bridged before
+   publication — 39% of the original test windows contained invented values that
+   no mask could flag. Run `data_pipeline/build_clean_cohorts.py` after
+   `build_metabonet.py`; it splices out constant-slope / sensor-clamped runs
+   longer than 60 min. The paper's numbers use these cleaned cohorts.
+2. **Timestamp units.** Sources stored as `timestamp[us]` produced unix
+   seconds ÷ 1000, giving degenerate time-of-day marks. Fixed in
+   `build_metabonet.py` (`idx.as_unit("ns")`); the dataset loader now also falls
+   back to the packed `tod_sin/tod_cos` channels instead of a synthetic phase.
+3. **Masked loss.** The `cgm_real` flag is now used: training loss and
+   validation selection ignore interpolated targets (`y` carries the mask as a
+   second channel). Test metrics are unchanged in definition.
+
+Net effect on the paper's conclusions (5 seeds): MLDG's advantage strengthened;
+the "single-ARISES collapses OOD" claim was an artifact of (2) and is retired;
+the 10%-of-patients data-efficiency claim holds for ReplaceBG/Flair but is a tie
+on BrisT1D. See `CHANGES.md`.
+
 ## Repo layout
 
 ```
@@ -99,6 +124,18 @@ All splits share a common feature spec — see `DATASET.md` §3 for the
 > `.npy` layout documented in `DATASET.md` §5b.
 
 ---
+
+### Step 1b — Decontaminate HUPA-UCM / T1D-UOM (required for the paper's numbers)
+
+```bash
+cd data_pipeline
+python build_clean_cohorts.py --cohorts HUPA-UCM T1D-UOM     --out ../data_output/metabonet_splits_clean --max-run-min 60
+```
+
+Point the training configs' `source_dirs` at `metabonet_splits_clean/<cohort>`
+for these two cohorts. Verify any cohort's timestamps with
+`np.diff(np.load('segments_ts_packed.npy')[:1000])` — values must be exactly 300
+within a segment.
 
 ## Step 2 — Run one federated trial (local single-machine)
 
