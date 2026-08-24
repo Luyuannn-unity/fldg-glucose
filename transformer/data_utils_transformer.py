@@ -220,9 +220,8 @@ class LazyCGMTransformerDataset(Dataset):
 
     def _marks(self, abs_start: int, end: int) -> np.ndarray:
         # Preferred: real unix timestamps. Fallback: the precomputed tod_sin/
-        # tod_cos channels (always correct, unit-independent). Last resort:
-        # a synthetic phase — which is WRONG (every window looks like it starts
-        # at midnight), so it is logged loudly.
+        # tod_cos channels (unit-independent). Last resort: a synthetic phase
+        # (every window then looks like it starts at midnight), logged loudly.
         if self._ts is not None:
             secs = np.asarray(self._ts[abs_start:end], dtype=np.int64) % self.SECONDS_PER_DAY
             mins = secs // 60

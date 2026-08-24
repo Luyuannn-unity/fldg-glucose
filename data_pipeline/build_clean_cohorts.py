@@ -21,9 +21,9 @@ Usage (after build_metabonet.py has produced manifest.json):
     python build_clean_cohorts.py --cohorts HUPA-UCM T1D-UOM \
         --out ../data_output/metabonet_splits_clean --max-run-min 60
 
-Contamination reference (original vs 60-min splice, HUPA-UCM): 28.7% of train
-and 39.0% of test windows contained a >30-min constant-slope run; at the 60-min
-threshold 13.0% / 25.2%. The splice keeps ~88% of train and ~70% of test rows.
+Effect on HUPA-UCM: ~29% of train and ~39% of test windows contain a >30-min
+constant-slope run in the raw source (13% / 25% at the 60-min threshold); the
+splice keeps ~88% of train and ~70% of test rows.
 """
 import argparse
 import json

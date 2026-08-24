@@ -147,7 +147,7 @@ def process_patient(df_pat: pd.DataFrame,
         seg["tod_cos"] = np.cos(2 * np.pi * tod)
 
         feat = seg[FEATURES].values.astype(np.float32)          # [T, 6]
-        ts   = (idx.as_unit("ns").astype(np.int64) // 1_000_000_000).values   # unit-safe → seconds (parquet may be timestamp[us])
+        ts   = (idx.as_unit("ns").astype(np.int64) // 1_000_000_000).values   # unit-independent → seconds
 
         segments.append((feat, ts))
 

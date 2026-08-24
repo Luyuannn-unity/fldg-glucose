@@ -251,41 +251,34 @@ python pack_metabonet_segments.py \
 - **`cgm_real` mask**: Column 6 is 1 for original sensor readings, 0 for linearly-interpolated values. Use this as a loss mask so the model is not penalised for errors on imputed targets.
 - **Packed format required for multi-client FL**: The sharded format opens one fd per segment. Always pack before running FL runs with more than one client.
 
-## 11. Data-quality corrections (2026-08)
+## 11. Artifact splicing and pipeline invariants
 
-Three defects were found after the original release. All are fixed in this repo;
-the corrected results are in `../CHANGES.md`.
+### 11a. Pre-resampled upstream sources
+Some public sources are already on a gap-free 5-min grid. MetaboNet's HUPA-UCM,
+for example, has no missing CGM at all: its 15-min FreeStyle Libre 2 readings were
+linearly resampled and dropout gaps linearly bridged (runs up to several hours)
+before publication. Such samples arrive as ordinary non-NaN values, so the §4 gap
+logic never triggers and `cgm_real` stays 1 — roughly 29% of HUPA-UCM training
+windows and 39% of its test windows contain a constant-slope run longer than
+30 min. T1D-UOM's 15-min-sampled patients (7 of 14) are a second case: regridding
+interpolates two of every three samples, and the bridges can chain into runs longer
+than the 30-min gap rule.
 
-### 11a. Upstream sources can be pre-imputed — `cgm_real` cannot see it
-The MetaboNet parquet for **HUPA-UCM has 0.0% missing CGM** for every patient: the
-15-min FreeStyle Libre 2 readings were linearly resampled to 5 min and dropout
-gaps were linearly bridged (runs up to 9 h) *before* publication, with no flag.
-Because those samples arrive as ordinary non-NaN values, the §4 gap logic never
-triggers and `cgm_real` is all-1. Contamination at the original release:
-28.7% of HUPA-UCM train windows and 39.0% of test windows contained a >30-min
-constant-slope run. **T1D-UOM**'s 15-min-sampled patients (7 of 14) are a second
-case: regridding invents 2 of every 3 samples; these *are* flagged, but the
-bridges chain into runs longer than the 30-min gap rule.
-
-**Fix — `build_clean_cohorts.py`** (run after `build_metabonet.py`): after
+**`build_clean_cohorts.py`** (run after `build_metabonet.py`) handles both: after
 interpolation, any constant-slope run or any at/out-of-bounds (≤40 / ≥400 mg/dL
 sensor clamp) run spanning more than 60 min is treated as missing; segments are
 spliced there; sub-280-row remnants are dropped; patient splits are reused from
-`manifest.json`. The paper's reported numbers use these cleaned cohorts for
-HUPA-UCM and T1D-UOM (the other cohorts are <2% contaminated at this threshold).
+`manifest.json`. The paper's HUPA-UCM and T1D-UOM numbers use these spliced
+cohorts (the other cohorts are <2% affected at this threshold).
 
 ### 11b. Timestamp units
-`segments_ts_packed.npy` must hold **unix seconds**. The original builder did
-`idx.astype(np.int64) // 1_000_000_000`, which is only correct for
-`datetime64[ns]` indices. pandas ≥ 2.0 preserves the parquet unit, and sources
-stored as `timestamp[us]` produced seconds ÷ 1000 — intra-segment diffs of {0,1}
-instead of 300 — and therefore degenerate time-of-day marks in training and
-evaluation. Fixed: `idx.as_unit("ns")` before the division. Sanity check for any
+`segments_ts_packed.npy` holds **unix seconds**. `build_metabonet.py` converts the
+index with `idx.as_unit("ns")` so the result is independent of the parquet's
+timestamp resolution (`timestamp[us]` sources are common). Sanity check for any
 built cohort: `np.diff(ts)` within a segment must be exactly 300.
 
-### 11c. The `cgm_real` mask is now actually used
-The training loss and validation model-selection ignored channel 6, so
-interpolated targets were scored as real. The dataset now returns `y` with the
-mask as a second channel (`[pred_len, 2]`), the loss adapters compute a masked
-mean, and the val `mse_norm` is masked. Headline test metrics keep their original
-(unmasked) definitions.
+### 11c. The `cgm_real` mask in training
+The dataset returns `y` with the mask as a second channel (`[pred_len, 2]`); the
+loss adapters compute a masked mean and the validation `mse_norm` is masked, so
+interpolated targets never contribute gradient or drive model selection.
+Headline test metrics keep their standard unmasked definitions.

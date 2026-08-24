@@ -10,30 +10,23 @@ weights and a handful of scalar metrics cross the wire per round.
 
 ---
 
-## Data-quality corrections (2026-08) — please read before reproducing
+## Data quality and artifact handling
 
-Three defects were found and fixed after the original release; the corrected
-results (all 5 seeds, every table) are in [`CHANGES.md`](CHANGES.md) and the
-technical details in [`data_pipeline/DATASET.md`](data_pipeline/DATASET.md) §11.
+Two properties of the public CGM sources shape the pipeline:
 
-1. **Pre-imputed upstream data (HUPA-UCM, T1D-UOM).** MetaboNet's HUPA-UCM has
-   0% missing CGM because it was linearly resampled and gap-bridged before
-   publication — 39% of the original test windows contained invented values that
-   no mask could flag. Run `data_pipeline/build_clean_cohorts.py` after
-   `build_metabonet.py`; it splices out constant-slope / sensor-clamped runs
-   longer than 60 min. The paper's numbers use these cleaned cohorts.
-2. **Timestamp units.** Sources stored as `timestamp[us]` produced unix
-   seconds ÷ 1000, giving degenerate time-of-day marks. Fixed in
-   `build_metabonet.py` (`idx.as_unit("ns")`); the dataset loader now also falls
-   back to the packed `tod_sin/tod_cos` channels instead of a synthetic phase.
-3. **Masked loss.** The `cgm_real` flag is now used: training loss and
-   validation selection ignore interpolated targets (`y` carries the mask as a
-   second channel). Test metrics are unchanged in definition.
+- **Pre-resampled upstream data.** Some MetaboNet cohorts are already on a
+  gap-free 5-min grid (e.g. HUPA-UCM: 15-min FreeStyle Libre 2 readings
+  linearly resampled and gap-bridged before publication), so the `cgm_real`
+  flag cannot identify their interpolated samples. `data_pipeline/build_clean_cohorts.py`
+  therefore splices out constant-slope and sensor-clamped (≤40 / ≥400 mg/dL)
+  runs longer than 60 min after interpolation. The paper's HUPA-UCM and T1D-UOM
+  numbers use these spliced cohorts (Step 1b).
+- **Masked objective.** Interpolated CGM samples (`cgm_real = 0`) never
+  contribute to the training loss or to validation model selection; test
+  metrics use the standard unmasked definitions.
 
-Net effect on the paper's conclusions (5 seeds): MLDG's advantage strengthened;
-the "single-ARISES collapses OOD" claim was an artifact of (2) and is retired;
-the 10%-of-patients data-efficiency claim holds for ReplaceBG/Flair but is a tie
-on BrisT1D. See `CHANGES.md`.
+`segments_ts_packed.npy` holds unix seconds and drives the time-of-day marks;
+the loader falls back to the packed `tod_sin/tod_cos` channels if it is absent.
 
 ## Repo layout
 
@@ -125,7 +118,7 @@ All splits share a common feature spec — see `DATASET.md` §3 for the
 
 ---
 
-### Step 1b — Decontaminate HUPA-UCM / T1D-UOM (required for the paper's numbers)
+### Step 1b — Artifact splicing for HUPA-UCM / T1D-UOM
 
 ```bash
 cd data_pipeline
