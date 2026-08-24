@@ -250,3 +250,35 @@ python pack_metabonet_segments.py \
 - **Insulin recomputation**: `insulin = bolus + basal` is always recomputed. The raw `insulin` column is unreliable after NaN filling.
 - **`cgm_real` mask**: Column 6 is 1 for original sensor readings, 0 for linearly-interpolated values. Use this as a loss mask so the model is not penalised for errors on imputed targets.
 - **Packed format required for multi-client FL**: The sharded format opens one fd per segment. Always pack before running FL runs with more than one client.
+
+## 11. Artifact splicing and pipeline invariants
+
+### 11a. Pre-resampled upstream sources
+Some public sources are already on a gap-free 5-min grid. MetaboNet's HUPA-UCM,
+for example, has no missing CGM at all: its 15-min FreeStyle Libre 2 readings were
+linearly resampled and dropout gaps linearly bridged (runs up to several hours)
+before publication. Such samples arrive as ordinary non-NaN values, so the §4 gap
+logic never triggers and `cgm_real` stays 1 — roughly 29% of HUPA-UCM training
+windows and 39% of its test windows contain a constant-slope run longer than
+30 min. T1D-UOM's 15-min-sampled patients (7 of 14) are a second case: regridding
+interpolates two of every three samples, and the bridges can chain into runs longer
+than the 30-min gap rule.
+
+**`build_clean_cohorts.py`** (run after `build_metabonet.py`) handles both: after
+interpolation, any constant-slope run or any at/out-of-bounds (≤40 / ≥400 mg/dL
+sensor clamp) run spanning more than 60 min is treated as missing; segments are
+spliced there; sub-280-row remnants are dropped; patient splits are reused from
+`manifest.json`. The paper's HUPA-UCM and T1D-UOM numbers use these spliced
+cohorts (the other cohorts are <2% affected at this threshold).
+
+### 11b. Timestamp units
+`segments_ts_packed.npy` holds **unix seconds**. `build_metabonet.py` converts the
+index with `idx.as_unit("ns")` so the result is independent of the parquet's
+timestamp resolution (`timestamp[us]` sources are common). Sanity check for any
+built cohort: `np.diff(ts)` within a segment must be exactly 300.
+
+### 11c. The `cgm_real` mask in training
+The dataset returns `y` with the mask as a second channel (`[pred_len, 2]`); the
+loss adapters compute a masked mean and the validation `mse_norm` is masked, so
+interpolated targets never contribute gradient or drive model selection.
+Headline test metrics keep their standard unmasked definitions.

@@ -64,11 +64,16 @@ class QuantileLoss:
             y_pred : (B, pred_len, n_quantiles)
             target : (B, pred_len, 1)
         """
+        mask = target[..., 1:2] if target.shape[-1] > 1 else None
+        target = target[..., :1]
         losses = []
         for i, q in enumerate(self.quantiles):
             errors = target - y_pred[..., [i]]
             losses.append(torch.max((q - 1) * errors, q * errors).unsqueeze(1))
-        return torch.mean(torch.sum(torch.cat(losses, dim=1), dim=1))
+        per_elem = torch.sum(torch.cat(losses, dim=1), dim=1)
+        if mask is None:
+            return torch.mean(per_elem)
+        return (per_elem * mask).sum() / mask.sum().clamp(min=1.0)
 
     def median(self, y_pred: torch.Tensor) -> torch.Tensor:
         """Return the median (q=0.5) quantile slice."""
@@ -88,6 +93,12 @@ class MSELossAdapter:
         self.quantiles = [0.5]
 
     def __call__(self, y_pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        # target may carry the cgm_real mask as channel 1: loss is then the
+        # masked mean over real (non-interpolated) samples only.
+        if target.shape[-1] > 1:
+            mask = target[..., 1:2]
+            se = (y_pred - target[..., :1]) ** 2
+            return (se * mask).sum() / mask.sum().clamp(min=1.0)
         return torch.mean((y_pred - target) ** 2)
 
     def median(self, y_pred: torch.Tensor) -> torch.Tensor:
@@ -1023,9 +1034,17 @@ class FLockModelTransformer(FlockModel):
                 out = self.model(x_enc, x_mark_enc, x_dec, x_mark_dec)
                 pred_norm = self.quantile_loss.median(out)
 
-                se_norm = (pred_norm - y) ** 2
-                sq_norm_sum += float(se_norm.sum().item())
-                n_norm += int(se_norm.numel())
+                # mse_norm is the model-selection metric: masked to real
+                # (non-interpolated) targets when y carries the cgm_real mask.
+                if y.shape[-1] > 1:
+                    msk = y[..., 1:2]
+                    se_norm = ((pred_norm - y[..., :1]) ** 2) * msk
+                    sq_norm_sum += float(se_norm.sum().item())
+                    n_norm += int(msk.sum().item())
+                else:
+                    se_norm = (pred_norm - y) ** 2
+                    sq_norm_sum += float(se_norm.sum().item())
+                    n_norm += int(se_norm.numel())
 
                 pred_h = pred_norm[:, h, 0]
                 true_h = y[:, h, 0]

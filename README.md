@@ -10,6 +10,24 @@ weights and a handful of scalar metrics cross the wire per round.
 
 ---
 
+## Data quality and artifact handling
+
+Two properties of the public CGM sources shape the pipeline:
+
+- **Pre-resampled upstream data.** Some MetaboNet cohorts are already on a
+  gap-free 5-min grid (e.g. HUPA-UCM: 15-min FreeStyle Libre 2 readings
+  linearly resampled and gap-bridged before publication), so the `cgm_real`
+  flag cannot identify their interpolated samples. `data_pipeline/build_clean_cohorts.py`
+  therefore splices out constant-slope and sensor-clamped (≤40 / ≥400 mg/dL)
+  runs longer than 60 min after interpolation. The paper's HUPA-UCM and T1D-UOM
+  numbers use these spliced cohorts (Step 1b).
+- **Masked objective.** Interpolated CGM samples (`cgm_real = 0`) never
+  contribute to the training loss or to validation model selection; test
+  metrics use the standard unmasked definitions.
+
+`segments_ts_packed.npy` holds unix seconds and drives the time-of-day marks;
+the loader falls back to the packed `tod_sin/tod_cos` channels if it is absent.
+
 ## Repo layout
 
 ```
@@ -99,6 +117,18 @@ All splits share a common feature spec — see `DATASET.md` §3 for the
 > `.npy` layout documented in `DATASET.md` §5b.
 
 ---
+
+### Step 1b — Artifact splicing for HUPA-UCM / T1D-UOM
+
+```bash
+cd data_pipeline
+python build_clean_cohorts.py --cohorts HUPA-UCM T1D-UOM     --out ../data_output/metabonet_splits_clean --max-run-min 60
+```
+
+Point the training configs' `source_dirs` at `metabonet_splits_clean/<cohort>`
+for these two cohorts. Verify any cohort's timestamps with
+`np.diff(np.load('segments_ts_packed.npy')[:1000])` — values must be exactly 300
+within a segment.
 
 ## Step 2 — Run one federated trial (local single-machine)
 
